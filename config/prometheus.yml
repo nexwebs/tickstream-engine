@@ -1,0 +1,44 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Productores Python
+  - job_name: 'producers'
+    static_configs:
+      - targets: ['localhost:9091']
+        labels:
+          service: 'producers'
+
+  # API Go
+  - job_name: 'api-go'
+    static_configs:
+      - targets: ['localhost:8080']
+        labels:
+          service: 'api'
+
+  # Flink (métricas en puerto 9250)
+  - job_name: 'flink'
+    static_configs:
+      - targets: ['localhost:9250']
+        labels:
+          service: 'flink'
+
+  # TimescaleDB (pg_exporter externo o node_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['localhost:9187']
+        labels:
+          service: 'timescaledb'
+
+  # Kafka Exporter
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['localhost:9308']
+        labels:
+          service: 'kafka'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

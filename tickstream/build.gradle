@@ -1,0 +1,57 @@
+plugins {
+ 	id 'java'
+ 	id 'org.springframework.boot' version '3.5.11'
+ 	id 'io.spring.dependency-management' version '1.1.7'
+ }
+ 
+ group = 'com.jobs'
+ version = '0.0.1-SNAPSHOT'
+ 
+ java {
+ 	toolchain {
+ 		languageVersion = JavaLanguageVersion.of(21)
+ 	}
+ }
+ 
+ tasks.withType(JavaCompile).configureEach {
+ 	options.compilerArgs.addAll(['--release', '21'])
+ }
+
+repositories {
+	mavenCentral()
+}
+
+ext {
+	flinkVersion = '2.2.0'
+	kafkaConnectorVersion = '4.0.1-2.0'
+}
+
+dependencies {
+	// Spring Boot
+	implementation 'org.springframework.boot:spring-boot-starter'
+	runtimeOnly 'org.postgresql:postgresql'
+	
+	// Flink - compatible con Java 21
+	implementation "org.apache.flink:flink-streaming-java:${flinkVersion}"
+	implementation "org.apache.flink:flink-connector-kafka:${kafkaConnectorVersion}"
+	implementation "org.apache.flink:flink-connector-base:${flinkVersion}"
+	implementation "org.apache.flink:flink-clients:${flinkVersion}"
+	implementation "org.apache.flink:flink-runtime:${flinkVersion}"
+	
+	// Flink Prometheus Reporter
+	implementation "org.apache.flink:flink-metrics-prometheus:${flinkVersion}"
+	
+	// JSON
+	implementation 'com.google.code.gson:gson:2.10.1'
+	
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('bootRun') {
+	jvmArgs = [
+		'--add-opens', 'java.base/java.util=ALL-UNNAMED',
+		'--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+		'--add-opens', 'java.base/java.lang.reflect=ALL-UNNAMED',
+		'--add-opens', 'java.base/java.io=ALL-UNNAMED'
+	]
+}

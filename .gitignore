@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+.opencode/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.metals/
+# Ruff / Linters
+.ruff_cache/
+.mypy_cache/
+
+# Java / Spark JARs (download via Maven)
+# *.jar  # Commented to avoid ignoring gradlew.bat and gradle-wrapper.jar
+
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Certificates
+certs/
+*.pfx
+*.crt
+*.key
+
+# Temp files
+*.tmp
+*.temp
+uploads/
+*.pdf
+
+# Debug scripts
+debug_*.py
+test_*.py
+test_*.bat
+simple_test.py
+fix_roles.py
+prueba_*.py
+
+# Spark checkpoint
+tmp/
+
+# Build artifacts
+trades_api/build/
+tickstream/build/
+tickstream/.gradle/
+trades_api/target/
+schema/MIGRATION.md
+ARQUITECTURE.md
+
+data/
