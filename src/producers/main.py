@@ -75,6 +75,7 @@ class StreamOrchestrator:
         while self._running:
             await asyncio.sleep(30)
             self._log_metrics()
+            metrics.update_session()  # Actualizar sesión activa
 
     async def stop_all(self):
         self._running = False

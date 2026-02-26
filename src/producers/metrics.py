@@ -4,6 +4,8 @@ Expone endpoint /metrics en puerto 9091
 """
 
 import logging
+import time
+import uuid
 from prometheus_client import (
     start_http_server,
     Counter,
@@ -52,6 +54,24 @@ rate_limit_hits = Counter(
     registry=registry,
 )
 
+# Métrica de sesión activa
+session_info = Gauge(
+    "tickstream_producer_session_info",
+    "Session active timestamp",
+    ["session_id", "exchange"],
+    registry=registry,
+)
+
+session_uptime = Gauge(
+    "tickstream_producer_uptime_seconds",
+    "Seconds since producer session started",
+    ["session_id", "exchange"],
+    registry=registry,
+)
+
+_session_id = str(uuid.uuid4())[:8]
+_session_start = time.time()
+
 
 def start_metrics_server(port=9091):
     """Inicia servidor de métricas Prometheus"""
@@ -81,3 +101,11 @@ def set_active(exchange: str, active: bool):
 def record_rate_limit(exchange: str):
     """Registra rate limit hit"""
     rate_limit_hits.labels(exchange=exchange).inc()
+
+
+def update_session():
+    """Actualiza la métrica de sesión activa con timestamp actual y uptime"""
+    elapsed = time.time() - _session_start
+    for exchange in ["binance", "coinbase", "kraken"]:
+        session_info.labels(session_id=_session_id, exchange=exchange).set(time.time())
+        session_uptime.labels(session_id=_session_id, exchange=exchange).set(elapsed)

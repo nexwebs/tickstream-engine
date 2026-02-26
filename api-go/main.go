@@ -38,7 +38,9 @@ func main() {
 	api := r.Group("/api/v1")
 	{
 		api.GET("/trades", handler.GetTrades)
+		api.GET("/trades/chart", handler.GetTradesChart)
 		api.GET("/anomalies", handler.GetAnomalies)
+		api.GET("/anomalies/chart", handler.GetAnomaliesChart)
 		api.GET("/anomalies/recent", handler.GetRecentAnomalies)
 		api.GET("/metrics", handler.GetMetrics)
 	}

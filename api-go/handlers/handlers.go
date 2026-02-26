@@ -37,6 +37,12 @@ var (
 		},
 		[]string{"query"},
 	)
+	dbConnectionsActive = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "tickstream_api_db_connections_active",
+			Help: "Active database connections",
+		},
+	)
 )
 
 type Handler struct {
@@ -64,6 +70,11 @@ func NewHandler(host string, port int, user, password, dbname string) (*Handler,
 }
 
 func (h *Handler) Health(c *gin.Context) {
+	start := time.Now()
+	defer func() {
+		requestsTotal.WithLabelValues("/health", c.Request.Method).Inc()
+		requestDuration.WithLabelValues("/health").Observe(time.Since(start).Seconds())
+	}()
 	c.JSON(http.StatusOK, models.HealthResponse{
 		Status:  "ok",
 		Service: "tickstream-api",
@@ -72,6 +83,7 @@ func (h *Handler) Health(c *gin.Context) {
 }
 
 func (h *Handler) GetTrades(c *gin.Context) {
+	start := time.Now()
 	symbol := c.Query("symbol")
 	limit := c.DefaultQuery("limit", "100")
 
@@ -96,12 +108,15 @@ func (h *Handler) GetTrades(c *gin.Context) {
 
 	query += conditions
 
+	qStart := time.Now()
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_trades").Observe(time.Since(qStart).Seconds())
+	dbConnectionsActive.Set(float64(h.DB.Stats().InUse))
 
 	var trades []models.Trade
 	for rows.Next() {
@@ -114,10 +129,13 @@ func (h *Handler) GetTrades(c *gin.Context) {
 		trades = append(trades, t)
 	}
 
+	requestsTotal.WithLabelValues("/api/v1/trades", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/trades").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, trades)
 }
 
 func (h *Handler) GetAnomalies(c *gin.Context) {
+	start := time.Now()
 	symbol := c.Query("symbol")
 	limit := c.DefaultQuery("limit", "100")
 
@@ -136,12 +154,14 @@ func (h *Handler) GetAnomalies(c *gin.Context) {
 		args = append(args, limit)
 	}
 
+	qStart := time.Now()
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_anomalies").Observe(time.Since(qStart).Seconds())
 
 	var anomalies []models.Anomaly
 	for rows.Next() {
@@ -156,10 +176,13 @@ func (h *Handler) GetAnomalies(c *gin.Context) {
 		anomalies = append(anomalies, a)
 	}
 
+	requestsTotal.WithLabelValues("/api/v1/anomalies", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/anomalies").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, anomalies)
 }
 
 func (h *Handler) GetRecentAnomalies(c *gin.Context) {
+	start := time.Now()
 	query := `
 		SELECT 
 			symbol,
@@ -174,12 +197,14 @@ func (h *Handler) GetRecentAnomalies(c *gin.Context) {
 		LIMIT 20
 	`
 
+	qStart := time.Now()
 	rows, err := h.DB.Query(query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_recent_anomalies").Observe(time.Since(qStart).Seconds())
 
 	var anomalies []models.RecentAnomaly
 	for rows.Next() {
@@ -192,10 +217,13 @@ func (h *Handler) GetRecentAnomalies(c *gin.Context) {
 		anomalies = append(anomalies, a)
 	}
 
+	requestsTotal.WithLabelValues("/api/v1/anomalies/recent", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/anomalies/recent").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, anomalies)
 }
 
 func (h *Handler) GetMetrics(c *gin.Context) {
+	start := time.Now()
 	symbol := c.Query("symbol")
 
 	query := `
@@ -217,12 +245,14 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 
 	query += " GROUP BY bucket ORDER BY bucket DESC LIMIT 60"
 
+	qStart := time.Now()
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_metrics").Observe(time.Since(qStart).Seconds())
 
 	type Metric struct {
 		Bucket      time.Time `json:"bucket"`
@@ -244,6 +274,8 @@ func (h *Handler) GetMetrics(c *gin.Context) {
 		metrics = append(metrics, m)
 	}
 
+	requestsTotal.WithLabelValues("/api/v1/metrics", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/metrics").Observe(time.Since(start).Seconds())
 	c.JSON(http.StatusOK, metrics)
 }
 
@@ -251,4 +283,130 @@ func (h *Handler) Close() {
 	if h.DB != nil {
 		h.DB.Close()
 	}
+}
+
+// New endpoint: Time-series for Grafana charts
+func (h *Handler) GetAnomaliesChart(c *gin.Context) {
+	start := time.Now()
+	symbol := c.Query("symbol")
+	interval := c.DefaultQuery("interval", "1 minute")
+	limit := c.DefaultQuery("limit", "60")
+
+	// Grafana format: array of {time, value} objects
+	query := `
+		SELECT 
+			EXTRACT(EPOCH FROM time_bucket('` + interval + `', ts))::bigint * 1000 AS time_ms,
+			COUNT(*) FILTER (WHERE is_anomaly) AS anomaly_count,
+			COUNT(*) AS total_windows,
+			MAX(z_score) AS max_z_score,
+			AVG(z_score) AS avg_z_score
+		FROM anomalies
+	`
+	args := []interface{}{}
+
+	if symbol != "" {
+		query += " WHERE symbol = $1"
+		args = append(args, symbol)
+		query += " GROUP BY time_ms ORDER BY time_ms DESC LIMIT $2"
+		args = append(args, limit)
+	} else {
+		query += " GROUP BY time_ms ORDER BY time_ms DESC LIMIT $1"
+		args = append(args, limit)
+	}
+
+	qStart := time.Now()
+	rows, err := h.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_anomalies_chart").Observe(time.Since(qStart).Seconds())
+
+	type ChartPoint struct {
+		Time         int64   `json:"time"`
+		AnomalyCount int64   `json:"anomaly_count"`
+		TotalWindows int64   `json:"total_windows"`
+		MaxZScore    float64 `json:"max_z_score"`
+		AvgZScore    float64 `json:"avg_z_score"`
+	}
+
+	var data []ChartPoint
+	for rows.Next() {
+		var p ChartPoint
+		err := rows.Scan(&p.Time, &p.AnomalyCount, &p.TotalWindows, &p.MaxZScore, &p.AvgZScore)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		data = append(data, p)
+	}
+
+	requestsTotal.WithLabelValues("/api/v1/anomalies/chart", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/anomalies/chart").Observe(time.Since(start).Seconds())
+	c.JSON(http.StatusOK, data)
+}
+
+// New endpoint: Trades time-series for Grafana
+func (h *Handler) GetTradesChart(c *gin.Context) {
+	start := time.Now()
+	symbol := c.Query("symbol")
+	interval := c.DefaultQuery("interval", "1 minute")
+	limit := c.DefaultQuery("limit", "60")
+
+	// Grafana format: array of {time, value} objects
+	query := `
+		SELECT 
+			EXTRACT(EPOCH FROM time_bucket('` + interval + `', ts))::bigint * 1000 AS time_ms,
+			AVG(price) AS avg_price,
+			MIN(price) AS min_price,
+			MAX(price) AS max_price,
+			SUM(qty) AS total_volume,
+			COUNT(*) AS trade_count
+		FROM trades
+	`
+	args := []interface{}{}
+
+	if symbol != "" {
+		query += " WHERE symbol = $1"
+		args = append(args, symbol)
+		query += " GROUP BY time_ms ORDER BY time_ms DESC LIMIT $2"
+		args = append(args, limit)
+	} else {
+		query += " GROUP BY time_ms ORDER BY time_ms DESC LIMIT $1"
+		args = append(args, limit)
+	}
+
+	qStart := time.Now()
+	rows, err := h.DB.Query(query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	dbQueryDuration.WithLabelValues("get_trades_chart").Observe(time.Since(qStart).Seconds())
+
+	type TradeChartPoint struct {
+		Time        int64   `json:"time"`
+		AvgPrice    float64 `json:"avg_price"`
+		MinPrice    float64 `json:"min_price"`
+		MaxPrice    float64 `json:"max_price"`
+		TotalVolume float64 `json:"total_volume"`
+		TradeCount  int64   `json:"trade_count"`
+	}
+
+	var data []TradeChartPoint
+	for rows.Next() {
+		var p TradeChartPoint
+		err := rows.Scan(&p.Time, &p.AvgPrice, &p.MinPrice, &p.MaxPrice, &p.TotalVolume, &p.TradeCount)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		data = append(data, p)
+	}
+
+	requestsTotal.WithLabelValues("/api/v1/trades/chart", c.Request.Method).Inc()
+	requestDuration.WithLabelValues("/api/v1/trades/chart").Observe(time.Since(start).Seconds())
+	c.JSON(http.StatusOK, data)
 }

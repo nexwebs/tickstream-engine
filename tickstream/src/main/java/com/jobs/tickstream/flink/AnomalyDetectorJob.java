@@ -26,6 +26,8 @@ import java.time.Duration;
 public class AnomalyDetectorJob {
 
     public static void main(String[] args) throws Exception {
+        System.out.println(">>> AnomalyDetectorJob.main() started <<<");
+        
         String kafkaBootstrapServers = "localhost:9092";
         String inputTopic = "trades-raw";
         String outputTopic = "trades-anomaly";
@@ -66,7 +68,8 @@ public class AnomalyDetectorJob {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.getConfig().setClosureCleanerLevel(org.apache.flink.api.common.ExecutionConfig.ClosureCleanerLevel.NONE);
-        env.enableCheckpointing(10000);
+        env.enableCheckpointing(10000); // 10s checkpoint
+        env.setParallelism(2); // Reduced for memory stability
 
         KafkaSource<String> kafkaSource = KafkaSource.<String>builder()
             .setBootstrapServers(kafkaBootstrapServers)
@@ -78,7 +81,17 @@ public class AnomalyDetectorJob {
 
         DataStream<String> rawStream = env.fromSource(
             kafkaSource,
-            WatermarkStrategy.noWatermarks(),
+            WatermarkStrategy
+                .<String>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+                .withTimestampAssigner((event, ts) -> {
+                    try {
+                        Gson gson = new Gson();
+                        java.util.Map<String, Object> map = gson.fromJson(event, java.util.Map.class);
+                        return ((Number) map.get("ts")).longValue();
+                    } catch (Exception e) {
+                        return System.currentTimeMillis();
+                    }
+                }),
             "Kafka Source"
         );
 
@@ -110,13 +123,16 @@ public class AnomalyDetectorJob {
             .window(SlidingEventTimeWindows.of(
                 Duration.ofSeconds(windowSizeSeconds),
                 Duration.ofSeconds(windowSlideSeconds)))
-            .aggregate(new TradeAggregateFunction());
+            .aggregate(new TradeAggregateFunction(), new WindowMetadataFunction());
 
         // Persistir TODAS las ventanas (no solo anomalías)
         windowed.sinkTo(new TimescaleDBSink(dbUrl, dbUser, dbPassword)).name("All Windows to TimescaleDB");
 
-        // También filtrar anomalías para Kafka output
-        DataStream<WindowAggregate> anomalies = windowed.filter(a -> a.isAnomaly());
+        // Guardar TODAS las ventanas como anomalías (para debug)
+        windowed.print().name("DEBUG: All Windows");
+        
+        // También filtrar anomalías para Kafka output y persistirlas
+        DataStream<WindowAggregate> anomalies = windowed; // Guardar todas
 
         DataStream<String> anomalyJson = anomalies.map(a -> String.format(
             "{\"symbol\":\"%s\",\"z_score\":%.2f,\"is_anomaly\":%b,\"anomaly_type\":\"%s\"}",
@@ -131,13 +147,16 @@ public class AnomalyDetectorJob {
                 .build())
             .build();
 
-        anomalyJson.sinkTo(kafkaSink).name("Anomalies to Kafka");
+        // COMMENTED OUT para aislar el problema de DB
+        // anomalyJson.sinkTo(kafkaSink).name("Anomalies to Kafka");
 
         anomalies.sinkTo(new TimescaleDBSink(dbUrl, dbUser, dbPassword)).name("Anomalies to TimescaleDB");
 
         anomalies.print().name("Print Anomalies");
 
+        System.out.println(">>> Calling env.execute() - Flink job should start now <<<");
         env.execute("Anomaly Detection Job");
+        System.out.println(">>> env.execute() returned - Flink job finished <<<");
     }
 
     public static class TradeParser implements MapFunction<String, Trade> {
@@ -159,6 +178,17 @@ public class AnomalyDetectorJob {
             } catch (Exception e) {
                 return new Trade();
             }
+        }
+    }
+
+    public static class WindowMetadataFunction extends org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction<WindowAggregate, WindowAggregate, String, org.apache.flink.streaming.api.windowing.windows.TimeWindow> {
+        @Override
+        public void process(String key, Context ctx, Iterable<WindowAggregate> elements, org.apache.flink.util.Collector<WindowAggregate> out) {
+            WindowAggregate agg = elements.iterator().next();
+            agg.setSymbol(key);
+            agg.setWindowStart(ctx.window().getStart());
+            agg.setWindowEnd(ctx.window().getEnd());
+            out.collect(agg);
         }
     }
 
@@ -189,12 +219,13 @@ public class AnomalyDetectorJob {
                 .average().orElse(0.0);
             double std = Math.sqrt(variance);
             double zScore = std > 0 ? (accumulator.getLastPrice() - mean) / std : 0.0;
-            boolean isAnomaly = Math.abs(zScore) > 3.0;
+            // Detectar anomalía: cualquier variación significativa
+            boolean isAnomaly = Math.abs(zScore) > 0.1 || accumulator.getCount() > 10;
             
             String anomalyType;
-            if (zScore > 3.0) anomalyType = "SPIKE";
-            else if (zScore < -3.0) anomalyType = "DROP";
-            else if (accumulator.getCount() > 100) anomalyType = "VOLUME_SURGE";
+            if (zScore > 1.0) anomalyType = "SPIKE";
+            else if (zScore < -1.0) anomalyType = "DROP";
+            else if (accumulator.getCount() > 30) anomalyType = "VOLUME_SURGE";
             else anomalyType = "NORMAL";
 
             return new WindowAggregate("UNKNOWN", 0, 0, mean, std, 
@@ -251,15 +282,18 @@ public class AnomalyDetectorJob {
     public static class TimescaleDBWriter implements SinkWriter<WindowAggregate> {
         private transient Connection conn;
         private transient PreparedStatement pstmt;
+        private int batchCount = 0;
+        private static final int BATCH_SIZE = 50;
 
         public TimescaleDBWriter(String dbUrl, String dbUser, String dbPassword) throws SQLException {
             try {
                 Class.forName("org.postgresql.Driver");
                 conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+                conn.setAutoCommit(false);
                 pstmt = conn.prepareStatement(
                     "INSERT INTO anomalies (ts, symbol, window_start, window_end, mean_price, std_price, " +
                     "last_price, z_score, is_anomaly, anomaly_type, trade_count) " +
-                    "VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    "VALUES (NOW(), ?, to_timestamp(?/1000.0), to_timestamp(?/1000.0), ?, ?, ?, ?, ?, ?, ?)");
             } catch (ClassNotFoundException e) {
                 throw new SQLException("PostgreSQL driver not found", e);
             }
@@ -279,7 +313,12 @@ public class AnomalyDetectorJob {
                 pstmt.setString(9, anomaly.getAnomalyType());
                 pstmt.setLong(10, anomaly.getTradeCount());
                 pstmt.addBatch();
-                pstmt.executeBatch();
+                batchCount++;
+                if (batchCount >= BATCH_SIZE) {
+                    pstmt.executeBatch();
+                    conn.commit();
+                    batchCount = 0;
+                }
             } catch (SQLException e) {
                 throw new IOException("Failed to write to TimescaleDB", e);
             }
@@ -288,8 +327,10 @@ public class AnomalyDetectorJob {
         @Override
         public void flush(boolean endOfInput) throws IOException {
             try {
-                if (pstmt != null) {
+                if (batchCount > 0) {
                     pstmt.executeBatch();
+                    conn.commit();
+                    batchCount = 0;
                 }
             } catch (SQLException e) {
                 throw new IOException("Failed to flush to TimescaleDB", e);
@@ -335,11 +376,15 @@ public class AnomalyDetectorJob {
     public static class TradeDBWriter implements SinkWriter<Trade> {
         private transient Connection conn;
         private transient PreparedStatement pstmt;
+        private int batchCount = 0;
+        private static final int BATCH_SIZE = 100; // Smaller batches for stability
 
         public TradeDBWriter(String dbUrl, String dbUser, String dbPassword) throws SQLException {
             try {
                 Class.forName("org.postgresql.Driver");
                 conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+                conn.setAutoCommit(false);
+                conn.setNetworkTimeout(null, 10000);
                 pstmt = conn.prepareStatement(
                     "INSERT INTO trades (ts, symbol, exchange, price, qty, trade_id, side) " +
                     "VALUES (to_timestamp(?/1000), ?, ?, ?, ?, ?, ?)");
@@ -359,6 +404,12 @@ public class AnomalyDetectorJob {
                 pstmt.setString(6, trade.getTradeId());
                 pstmt.setString(7, trade.getSide());
                 pstmt.addBatch();
+                batchCount++;
+                if (batchCount >= BATCH_SIZE) {
+                    pstmt.executeBatch();
+                    conn.commit();
+                    batchCount = 0;
+                }
             } catch (SQLException e) {
                 throw new IOException("Failed to write trade to DB", e);
             }
@@ -367,8 +418,10 @@ public class AnomalyDetectorJob {
         @Override
         public void flush(boolean endOfInput) throws IOException {
             try {
-                if (pstmt != null) {
+                if (batchCount > 0) {
                     pstmt.executeBatch();
+                    conn.commit();
+                    batchCount = 0;
                 }
             } catch (SQLException e) {
                 throw new IOException("Failed to flush trades to DB", e);
