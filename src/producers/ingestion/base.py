@@ -163,7 +163,7 @@ class BaseProducer(ABC):
 
             if self._messages_this_second >= self._max_rate:
                 self.metrics.messages_failed += 1
-                prom_metrics.record_failure(self.name)
+                prom_metrics.record_dropped_rate_limit(self.name)
                 return False
 
             self._messages_this_second += 1

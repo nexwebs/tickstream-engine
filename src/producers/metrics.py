@@ -27,7 +27,14 @@ messages_sent = Counter(
 
 messages_failed = Counter(
     "tickstream_producer_messages_failed_total",
-    "Total messages failed",
+    "Total messages failed (Kafka send errors)",
+    ["exchange"],
+    registry=registry,
+)
+
+messages_dropped_rate_limit = Counter(
+    "tickstream_producer_messages_dropped_total",
+    "Total messages dropped due to rate limiting",
     ["exchange"],
     registry=registry,
 )
@@ -53,6 +60,18 @@ rate_limit_hits = Counter(
     ["exchange"],
     registry=registry,
 )
+
+
+# Initialize counters with 0 for proper Prometheus increase() calculations
+def _init_counters():
+    """Initialize counters to 0 so Prometheus can calculate increases"""
+    for exchange in ["binance", "coinbase", "kraken"]:
+        messages_sent.labels(exchange=exchange, symbol="INIT").inc(0)
+        messages_failed.labels(exchange=exchange).inc(0)
+        messages_dropped_rate_limit.labels(exchange=exchange).inc(0)
+
+
+_init_counters()
 
 # Métrica de sesión activa
 session_info = Gauge(
@@ -89,8 +108,13 @@ def record_send(exchange: str, symbol: str, latency_seconds: float):
 
 
 def record_failure(exchange: str):
-    """Registra fallo de envío"""
+    """Registra fallo de envío a Kafka"""
     messages_failed.labels(exchange=exchange).inc()
+
+
+def record_dropped_rate_limit(exchange: str):
+    """Registra mensaje descartado por rate limit"""
+    messages_dropped_rate_limit.labels(exchange=exchange).inc()
 
 
 def set_active(exchange: str, active: bool):

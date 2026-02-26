@@ -8,7 +8,7 @@ Exchanges (WebSocket) → Python Producers → Kafka → Flink (Java 21) → Tim
                                                                    Prometheus + Grafana
 ```
 
-**Objective:** Anomaly detection in cryptocurrency prices at 2,000 msg/s with persistence.
+**Objective:** Anomaly detection in cryptocurrency prices at 200 msg/s with persistence.
 
 ## Technology Stack
 
@@ -47,11 +47,21 @@ cd tickstream && ./gradlew bootRun
 | Producer Metrics | 9091 | ❌ CLOSED |
 | Postgres Exporter | 9187 | 🔍 VERIFY |
 | Kafka Exporter | 9308 |  🔍 VERIFY |
-| Flink Metrics | 9250 | ⏳ PENDING |
+| Flink Metrics | 9250 | ⏳ EVALUATE |
 ## Key Files
 
-- `tickstream/` - Java Spring Boot + Flink project
+- `tickstream/` - Java Spring Boot + Flink project Real Time
 - `src/producers/` - Python Kafka producers with Prometheus metrics
 - `config/prometheus.yml` - Monitoring configuration
-- `config/grafana-dashboard.json` - Metrics dashboard
+- `config/grafana-dashboard.json` - Metrics dashboard 
 - `db/schema.sql` - TimescaleDB schema
+
+## TickStream · Observability
+- Screenshot + JSON 
+[![grafana.png](https://i.postimg.cc/fyf1QfSN/grafana.png)](https://postimg.cc/0KrVpmCW)
+
+**Comentarios** 
+- End-to-end througput, la brecha para Binance con picos de ~160 msg/s pero con caídas periodicas ~20 msg/s en flujo de mensajes limitado por el rate-limit y/o reconexiones. Coinbase y Kraken tinen  throughpu bajo y estable.
+- Producer Errors en 0, es relativamente bueno porque no hay fallas en el envío de mensajes al topic de entrada en Kafka.
+- La latencia p50/p95/p99 colapsa en  sola línea cerca de 50ms indica que no hay tail latency significativa, lo cual es una señal sólida de que Kafka está bien dimensionado para el volumen actual.
+- La arquitectura fue diseñada para escalar hasta ~2000 msg/s mediante la distribución de carga en 5 particiones, pendiente de validación bajo prueba de estrés.

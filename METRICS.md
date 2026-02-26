@@ -144,20 +144,3 @@ tickstream_producer_session_info
 | Conexiones DB altas | `pg_stat_database_numbackends > 80` | warning |
 | Cache hit bajo | `pg_stat_database_blks_hit / (blks_hit + blks_read) < 0.8` | warning |
 
-
-# Health check
-curl http://localhost:8080/health
-
-# Trades
-curl http://localhost:8080/api/v1/trades
-curl "http://localhost:8080/api/v1/trades?symbol=BTC&limit=50"
-
-# Anomalies
-curl http://localhost:8080/api/v1/anomalies
-curl http://localhost:8080/api/v1/anomalies/recent
-
-# Metrics
-curl http://localhost:8080/api/v1/metrics
-
-# Prometheus metrics
-curl http://localhost:8080/metrics
