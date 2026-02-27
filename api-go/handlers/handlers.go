@@ -244,7 +244,7 @@ func (h *Handler) GetAnomaliesChart(c *gin.Context) {
 
 	base := fmt.Sprintf(`
 		SELECT
-			CAST(EXTRACT(EPOCH FROM time_bucket('%s', ts)) AS BIGINT) AS bucket_time,
+			CAST(EXTRACT(EPOCH FROM time_bucket('%s', ts)) AS BIGINT) * 1000 AS bucket_time,
 			COUNT(*) FILTER (WHERE is_anomaly) AS anomaly_count,
 			COUNT(*) AS total_windows,
 			MAX(z_score) AS max_z_score,
@@ -298,7 +298,7 @@ func (h *Handler) GetTradesChart(c *gin.Context) {
 
 	base := fmt.Sprintf(`
 		SELECT
-			CAST(EXTRACT(EPOCH FROM time_bucket('%s', ts)) AS BIGINT) AS bucket_time,
+			CAST(EXTRACT(EPOCH FROM time_bucket('%s', ts)) AS BIGINT) * 1000 AS bucket_time,
 			AVG(price) AS avg_price,
 			MIN(price) AS min_price,
 			MAX(price) AS max_price,

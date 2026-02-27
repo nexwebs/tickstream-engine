@@ -1,4 +1,4 @@
-# TickStream Engine - Real-Time Trading Data Streaming
+# TickStream — Real-Time Price Anomaly Detection
 
 ## Architecture
 
@@ -58,10 +58,14 @@ cd tickstream && ./gradlew bootRun
 
 ## TickStream · Observability
 - Screenshot + JSON 
-[![grafana.png](https://i.postimg.cc/fyf1QfSN/grafana.png)](https://postimg.cc/0KrVpmCW)
+[![grafana.png](https://i.postimg.cc/tCpR8rn7/grafana.png)](https://postimg.cc/YjDwWz3w)
 
 **Comentarios** 
+- Threshold de anomalía: `|z| > 0.1` — permisivo intencionalmente para validar el pipeline completo durante desarrollo, actualizar a `|z| > 2.5`.
+- El rango intradía observado por ventana de 1 minuto es de $8–$77 USD, con una desviación estándar típica de ~$10–$15, en el nivel de precio actual de BTCUSD.
+- El pipeline opera actualmente a ~60-80 msg/s agregados (binance + coinbase + kraken).
+  La arquitectura soporta escalar horizontalmente añadiendo particiones Kafka y 
+  paralelismo Flink, sin cambios en el código de producción.
 - End-to-end througput, la brecha para Binance con picos de ~160 msg/s pero con caídas periodicas ~20 msg/s en flujo de mensajes limitado por el rate-limit y/o reconexiones. Coinbase y Kraken tinen  throughpu bajo y estable.
 - Producer Errors en 0, es relativamente bueno porque no hay fallas en el envío de mensajes al topic de entrada en Kafka.
 - La latencia p50/p95/p99 colapsa en  sola línea cerca de 50ms indica que no hay tail latency significativa, lo cual es una señal sólida de que Kafka está bien dimensionado para el volumen actual.
-- La arquitectura fue diseñada para escalar hasta ~2000 msg/s mediante la distribución de carga en 5 particiones, pendiente de validación bajo prueba de estrés.
