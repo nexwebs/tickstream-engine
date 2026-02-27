@@ -1,14 +1,13 @@
--- ============================================================
+
 -- SCHEMA: Streams Tick Level - Para NUEVA Base de Datos
 -- Uso: Crear desde cero en una DB limpia
--- ============================================================
+
 
 -- 1. Extensión TimescaleDB
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
--- ============================================================
+
 -- 2. TABLA: trades (trades crudos)
--- ============================================================
 DROP TABLE IF EXISTS trades CASCADE;
 
 CREATE TABLE trades (
@@ -39,9 +38,8 @@ ALTER TABLE trades SET (
 );
 SELECT add_compression_policy('trades', INTERVAL '1 hour');
 
--- ============================================================
+
 -- 3. TABLA: anomalies (resultados Z-score)
--- ============================================================
 DROP TABLE IF EXISTS anomalies CASCADE;
 
 CREATE TABLE anomalies (
@@ -76,9 +74,8 @@ ALTER TABLE anomalies SET (
 );
 SELECT add_compression_policy('anomalies', INTERVAL '1 hour');
 
--- ============================================================
+
 -- 4. TABLA: aggregated_metrics
--- ============================================================
 DROP TABLE IF EXISTS aggregated_metrics CASCADE;
 
 CREATE TABLE aggregated_metrics (
@@ -99,9 +96,8 @@ SELECT create_hypertable('aggregated_metrics', 'ts',
 
 CREATE INDEX idx_aggregated_symbol ON aggregated_metrics (symbol);
 
--- ============================================================
+
 -- 5. VISTA: v_recent_anomalies
--- ============================================================
 CREATE OR REPLACE VIEW v_recent_anomalies AS
 SELECT 
     symbol,
@@ -114,9 +110,8 @@ WHERE ts > NOW() - INTERVAL '1 hour'
 GROUP BY symbol
 ORDER BY anomaly_count DESC;
 
--- ============================================================
+
 -- 6. CONTINUOUS AGGREGATE: cagg_anomalies_hourly
--- ============================================================
 DROP MATERIALIZED VIEW IF EXISTS cagg_anomalies_hourly CASCADE;
 
 CREATE MATERIALIZED VIEW cagg_anomalies_hourly
